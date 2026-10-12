@@ -87,10 +87,35 @@ Kết quả injection: `8 passed in 3.65s`, không có SKIP. Đủ 4 lure chạy
 
 Test chạy ngoài sandbox do lỗi quyền thư mục tạm Windows đã gặp trước đó, tắt cache pytest. Log test nằm trong thư mục tạm. Chưa chạy CLI tạo ledger thật hay attack-after.log ở bước này; bằng chứng attack-before.log vẫn giữ nguyên.
 
+## CP3e — Kiểm ledger
+
+Ledger đã viết cùng CP3c, lần này em chạy kiểm lại và tạo log thật. append thêm prev_hash rồi tính SHA-256 từ dòng chưa có hash, dùng json.dumps với sort_keys=True. verify kiểm reason, liên kết dòng trước và hash từng dòng. Runner ghi cả allow/deny, tham số chỉ lưu args_hash, không lưu hồ sơ khách.
+
+Lệnh test:
+
+```powershell
+python -m pytest tests/test_ledger.py -v --basetemp=.pytest_tmp -p no:cacheprovider
+```
+
+Kết quả `3 passed in 0.04s`. Chạy ngoài sandbox vì lỗi quyền thư mục tạm Windows đã gặp trước đó.
+
+Sau đó chạy CLI thật qua runner mới:
+
+```powershell
+python -m agent.loop --mock --as dpo "Tổng hợp các ticket còn mở tuần này"
+python -c "from agent.ledger import verify; from pathlib import Path; print(verify(Path('reports/ledger.jsonl')))"
+```
+
+Agent tổng hợp 45 file ticket. verify trả `True`, ledger hiện có 24 dòng. Dòng `reports/ledger.jsonl:2` có tool=http_post, decision=deny, on_behalf_of=dpo. Reason là `Restricted data cannot be used in a run with egress enabled`. Có lý do rõ, không gửi POST.
+
+Em sao chép ledger rồi thêm một ký tự X vào reason ở dòng 13, giữ nguyên hash. verify bản sửa trả `False`. Bản gốc vẫn `True`; bản thử đã xóa, không sửa bằng chứng thật.
+
+Chạy thêm thì số dòng sẽ tăng. Hash chain này phát hiện sửa dòng khi chưa tính lại hash, nhưng không tự phát hiện xóa dòng cuối hay viết lại cả chuỗi. Muốn kiểm kiểu đó cần mốc tin cậy bên ngoài file.
+
 ## Các phần kiểm chứng còn lại
 
 - OS / Python / Gitleaks version:
 - `python -m pytest tests/ -q`:
 - `pre-commit run --all-files`:
-- Ledger verify:
+- Ledger verify: `True` ở CP3e; bản sao sửa dòng 13 trả `False`.
 - Các lỗi còn lại:
