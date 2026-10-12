@@ -66,6 +66,27 @@ Lần chạy trong sandbox ban đầu bị lỗi quyền .pytest_tmp của Windo
 
 Quyền principal vẫn chỉ là mô phỏng từ data/principals.json. --as dpo không xác thực người đang dùng máy. Phần này chưa phải hệ thống xác thực thực tế.
 
+## CP3d — Tách luồng và chặn injection
+
+Em kiểm lại runner theo yêu cầu bước này. Phần split đã làm cùng CP3c nên không cần sửa thêm code. Run A chỉ gọi search_docs, lấy số ticket từ tên file, ví dụ ticket-007.md thành 7. Nội dung ticket được che PII trước khi đưa cho LLM tóm tắt. Không lấy mã khách từ lời attacker để chuyển sang Run B.
+
+Run B chỉ nhận danh sách số ticket cùng thông tin quyền của lần chạy, không có text ticket. Sau khi policy allow mới mở dữ liệu riêng để tra related_tickets, rồi kiểm policy lần nữa trước mỗi read_customer. Vì vậy KH-000777 xuất hiện trong text cũng không đủ để agent đọc hồ sơ này. Còn khách thật sự gắn với ticket vẫn đọc được nếu principal có quyền.
+
+Khi phát hiện chỉ thị gửi, runner kiểm riêng http_post với restricted và egress=True. Tham số lượt kiểm chỉ có URL sink localhost, không mang hồ sơ. Policy deny thì ghi ledger với reason, không gọi tools.http_post.
+
+Hai lệnh đã chạy trong .venv:
+
+```powershell
+python -m pytest tests/test_split.py -v --basetemp=.pytest_tmp -p no:cacheprovider
+python -m pytest tests/test_injection.py -v --basetemp=.pytest_tmp -p no:cacheprovider
+```
+
+Kết quả split: `1 passed in 2.64s`. Test theo dõi read_customer, xác nhận KH-000777 chưa từng được đọc và vẫn có khách hợp lệ được đọc. Đây là chặn ngay từ việc chọn hồ sơ, không chỉ giữ dữ liệu lại sau khi đã đọc nhầm.
+
+Kết quả injection: `8 passed in 3.65s`, không có SKIP. Đủ 4 lure chạy với cả support_l1 và dpo, không có PII tới sink. Support bị chặn quyền đọc hồ sơ; DPO vẫn được đọc hồ sơ liên quan, còn lượt gửi restricted bị policy chặn. Không chặn tất cả để lấy test pass.
+
+Test chạy ngoài sandbox do lỗi quyền thư mục tạm Windows đã gặp trước đó, tắt cache pytest. Log test nằm trong thư mục tạm. Chưa chạy CLI tạo ledger thật hay attack-after.log ở bước này; bằng chứng attack-before.log vẫn giữ nguyên.
+
 ## Các phần kiểm chứng còn lại
 
 - OS / Python / Gitleaks version:
