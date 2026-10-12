@@ -112,10 +112,32 @@ Em sao chép ledger rồi thêm một ký tự X vào reason ở dòng 13, giữ
 
 Chạy thêm thì số dòng sẽ tăng. Hash chain này phát hiện sửa dòng khi chưa tính lại hash, nhưng không tự phát hiện xóa dòng cuối hay viết lại cả chuỗi. Muốn kiểm kiểu đó cần mốc tin cậy bên ngoài file.
 
+## CP4 — Supply chain và token giả
+
+Gitleaks 8.30.1, pre-commit 4.6.2, Python vẫn 3.12.10. Ban đầu chưa có gitleaks trong PATH nên tải release chính thức, đặt vào .venv/Scripts. Kích hoạt .venv thì dùng được lệnh gitleaks.
+
+Các lệnh đã chạy (dùng Python của .venv):
+
+```powershell
+gitleaks version
+gitleaks git --config .gitleaks.toml --redact .
+gitleaks dir --config .gitleaks.toml --redact .
+python -m piptools compile --generate-hashes -o requirements.lock requirements.txt
+python -m pip install --require-hashes -r requirements.lock
+python -m pip install --require-hashes --force-reinstall -r requirements.lock
+pre-commit install
+pre-commit run --all-files
+python -m pytest tests/test_supply_chain.py -v --basetemp=.pytest_tmp -p no:cacheprovider
+```
+
+Quét lịch sử: 11 commit, 1 finding, exit 1. Token giả ở commit 1bdd849, file lab-fake-secret.txt dòng 1, rule lab24-synthetic-token. Quét file hiện tại: sạch, exit 0. Không cần chỉnh .gitleaks.toml. Chi tiết ghi ở reports/secrets-incident.md.
+
+Lock tạo thành công, cài với hash thành công. Cài lại thêm để kiểm hash gói thật sự, không chỉ báo đã có sẵn. Hook pin v8.30.1, gitleaks-system, pass_filenames=false; đã install, run --all-files báo Passed. Test supply chain `3 passed in 0.03s`. Test chạy ngoài sandbox vì quyền thư mục tạm Windows.
+
 ## Các phần kiểm chứng còn lại
 
-- OS / Python / Gitleaks version:
+- OS / Python / Gitleaks version: Windows / 3.12.10 / 8.30.1.
 - `python -m pytest tests/ -q`:
-- `pre-commit run --all-files`:
+- `pre-commit run --all-files`: Passed ở CP4.
 - Ledger verify: `True` ở CP3e; bản sao sửa dòng 13 trả `False`.
 - Các lỗi còn lại:
