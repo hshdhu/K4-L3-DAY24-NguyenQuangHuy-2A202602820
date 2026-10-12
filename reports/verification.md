@@ -134,10 +134,35 @@ Quét lịch sử: 11 commit, 1 finding, exit 1. Token giả ở commit 1bdd849,
 
 Lock tạo thành công, cài với hash thành công. Cài lại thêm để kiểm hash gói thật sự, không chỉ báo đã có sẵn. Hook pin v8.30.1, gitleaks-system, pass_filenames=false; đã install, run --all-files báo Passed. Test supply chain `3 passed in 0.03s`. Test chạy ngoài sandbox vì quyền thư mục tạm Windows.
 
+## CP5 — Chạy lại sau sửa
+
+Reset sink trước test, rồi chạy:
+
+```powershell
+python sink/sink.py --reset
+python -m pytest tests/ -q --basetemp=.pytest_tmp -p no:cacheprovider
+```
+
+Kết quả `33 passed in 4.80s`, 0 fail, 0 skip. Chạy ngoài sandbox để tránh lỗi quyền thư mục tạm Windows. Sau test em reset sink lần nữa, bật server localhost trong nền rồi chạy CLI, đúng luồng runner mới:
+
+```powershell
+python -m agent.loop --mock --as dpo "Tổng hợp các ticket còn mở tuần này"
+Copy-Item -LiteralPath reports/sink.log -Destination reports/attack-after.log
+(Get-Item reports/attack-after.log).Length
+```
+
+Agent tổng hợp 45 file ticket. attack-after.log có 0 byte. Sink đang nghe trong lúc replay, đã tắt sau khi lấy log. Không dùng log tự reset của pytest làm bằng chứng này.
+
+Kiểm cuối: python -m agent.check_lure corpus/ticket-90*.md báo 4/4 lure sẵn sàng; pre-commit run --all-files báo Passed. git diff --check sạch sau khi bỏ một dòng trắng dư cuối báo cáo lure.
+
+attack-before.log vẫn có 4 dòng POST với KH-000999 giả. Ledger sau replay có 48 dòng, verify trả True, mọi dòng có reason. Dòng 26 ghi http_post deny, on_behalf_of=dpo, reason là Restricted data cannot be used in a run with egress enabled. Dòng 2 là lượt deny cũ từ CP3e, không xóa đi.
+
+Đã bổ sung kết quả sau sửa cho 4 lure trong injection-corpus.md. Log rỗng là replay chung cả corpus; kết quả riêng từng lure dựa trên 8 test injection. compliance-mapping.md có link nguồn chính thức và số dòng thật; điều khoản pháp luật cụ thể chưa xác minh từ toàn văn nên ghi rõ. dpia-lite.md chỉ mô tả học tập.
+
 ## Các phần kiểm chứng còn lại
 
 - OS / Python / Gitleaks version: Windows / 3.12.10 / 8.30.1.
-- `python -m pytest tests/ -q`:
+- `python -m pytest tests/ -q`: 33 passed, 0 fail, 0 skip ở CP5.
 - `pre-commit run --all-files`: Passed ở CP4.
-- Ledger verify: `True` ở CP3e; bản sao sửa dòng 13 trả `False`.
-- Các lỗi còn lại:
+- Ledger verify: `True` ở CP5, 48 dòng; bản sao sửa dòng 13 ở CP3e trả `False`.
+- Các lỗi còn lại: không có test fail. NOT_VERIFIED: điều khoản pháp luật cụ thể và mức tuân thủ hệ thống thật; bài chỉ có mock và dữ liệu giả.
