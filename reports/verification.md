@@ -26,6 +26,24 @@ Em kiểm thêm 5 trường hợp bằng `text[start:end]`: STK 12 số trùng d
 
 Giới hạn: regex mới nhận dạng theo hình thức, không xác minh số đó có thật hay không. Tài khoản cần đứng ngay sau nhãn STK/số tài khoản (có thể có dấu phân cách); thiếu nhãn thì có thể bỏ sót hoặc nhầm với loại khác. CCCD 12 số không có nhãn vẫn được nhận, nên một mã khác cùng dạng cũng có thể bị che nhầm. Chưa hỗ trợ số điện thoại dạng +84, CCCD có dấu cách, tên người hay các cách viết né bằng ký tự ẩn. Email chỉ xử lý dạng Latin thông dụng. Kết quả 100% ở bộ mẫu chưa nói được dữ liệu thực tế cũng đạt như vậy.
 
+## CP3b — Cổng quyết định cho tool
+
+Em đã viết `check()` trong `agent/policy.py`. Đầu tiên kiểm loại dữ liệu, chỉ nhận public/internal/restricted. Restricted mà run bật egress thì chặn luôn. DPO cũng vậy.
+
+Các lời gọi còn lại phải có principal trong `data/principals.json`, đúng mục đích và tool được phép. Tool phải nằm trong scope của agent, nếu có ủy quyền thì phải nằm thêm trong scope của agent cha. Hạn dùng cần có múi giờ UTC và chưa hết hạn. Cả allow lẫn deny đều trả lý do, không để trống.
+
+Lệnh đã chạy trong `.venv`:
+
+```powershell
+python -m pytest tests/test_policy.py -v --basetemp=.pytest_tmp -p no:cacheprovider
+```
+
+Kết quả: `4 passed in 0.02s`. Hai test restricted + egress đều deny, gồm cả trường hợp DPO có đủ quyền. Tìm ticket internal hợp lệ được allow, public + egress cũng được allow khi đủ các điều kiện còn lại. Không phải chặn hết. Em tắt phần cache của pytest để tránh lỗi quyền thư mục đã gặp ở CP3a.
+
+Em kiểm thêm 12 trường hợp trực tiếp: DPO hợp lệ, loại dữ liệu lạ, support đọc hồ sơ, principal lạ, sai mục đích, thiếu scope agent, thiếu scope cha, ủy quyền hợp lệ, hết hạn, thiếu hạn, hạn không có múi giờ và hạn khác UTC. Đều ra đúng allow/deny dự kiến, có reason.
+
+Phần này mới là hàm quyết định. Runner vẫn scaffold, chưa đặt cổng trước tool thật hay ghi ledger; việc đó làm tiếp ở CP3c. Principal trong JSON cũng chỉ là quyền giả lập của bài, chưa xác thực người dùng thật.
+
 ## Các phần kiểm chứng còn lại
 
 - OS / Python / Gitleaks version:

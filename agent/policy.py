@@ -35,6 +35,12 @@ không phải xác thực người dùng production.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+
+
+PRINCIPALS_FILE = Path(__file__).resolve().parent.parent / "data" / "principals.json"
 
 
 @dataclass(frozen=True)
@@ -52,4 +58,39 @@ class PolicyContext:
 
 
 def check(context: PolicyContext) -> tuple[bool, str]:
-    raise NotImplementedError("BƯỚC 3b: implement policy check")
+    if context.data_classification not in {"public", "internal", "restricted"}:
+        return False, "Unknown data classification"
+    if context.data_classification == "restricted" and context.egress_enabled:
+        return False, "Restricted data cannot be used in a run with egress enabled"
+
+    try:
+        principals = json.loads(PRINCIPALS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False, "Cannot load principal permissions"
+    if not isinstance(principals, dict):
+        return False, "Invalid principal permissions"
+    principal = principals.get(context.principal_id)
+    if not isinstance(principal, dict):
+        return False, "Unknown principal"
+
+    if not context.agent_owner or context.delegation_depth < 0:
+        return False, "Missing agent owner or invalid delegation depth"
+    if context.request_purpose not in principal.get("purposes", []):
+        return False, "Request purpose is not permitted for this principal"
+    if context.requested_tool not in principal.get("allowed_tools", []):
+        return False, "Requested tool is not permitted for this principal"
+    if context.requested_tool not in context.agent_scopes:
+        return False, "Requested tool is outside agent scopes"
+    if context.delegation_depth > 0 and context.requested_tool not in context.parent_scopes:
+        return False, "Requested tool is outside parent scopes"
+
+    try:
+        expires_at = datetime.fromisoformat(context.expires_at)
+    except (TypeError, ValueError):
+        return False, "Invalid expiry timestamp"
+    if expires_at.tzinfo is None or expires_at.utcoffset() != timedelta(0):
+        return False, "Expiry timestamp must include UTC timezone"
+    if expires_at <= datetime.now(timezone.utc):
+        return False, "Agent permissions have expired"
+
+    return True, "Classification, principal, purpose, scopes and UTC expiry are valid"
