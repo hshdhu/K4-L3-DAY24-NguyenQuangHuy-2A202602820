@@ -60,6 +60,13 @@ Interface bắt buộc (agent/loop.py import và gọi hàm này nếu tồn t�
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import re
+from uuid import uuid4
+
+from agent import ledger, pii, policy, tools
 
 REPORTS_DIR = Path(__file__).resolve().parent.parent / "reports"
 DEFAULT_LEDGER_PATH = REPORTS_DIR / "ledger.jsonl"
@@ -71,4 +78,71 @@ class RunnerScaffoldPending(NotImplementedError):
 
 def handle(message: str, llm, log_dir: Path | None = None,
            principal_id: str = "support_l1") -> str:
-    raise RunnerScaffoldPending("BƯỚC 3c: implement trifecta split")
+    path = Path(log_dir) / "ledger.jsonl" if log_dir is not None else DEFAULT_LEDGER_PATH
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    run_a = str(uuid4())
+    run_b = str(uuid4())
+    if not _authorize(path, principal_id, run_a, expires_at,
+                      "search_docs", "internal", "summarize-tickets",
+                      ("search_docs",), {"query": message}):
+        return "Không có quyền tìm ticket cho yêu cầu này."
+
+    docs = tools.search_docs(message)
+    safe_docs = [{"id": doc["id"], "text": pii.redact(doc["text"])} for doc in docs]
+    injected = llm.find_injection("\n\n".join(doc["text"] for doc in safe_docs))
+    # Chỉ ghi nhận ý định gửi; Run A không có quyền đọc hồ sơ hay POST.
+    if injected is not None:
+        _authorize(path, principal_id, run_a, expires_at,
+                   "http_post", "restricted", "support-reply",
+                   ("search_docs",), {"url": "http://127.0.0.1:10024/reconcile"},
+                   egress=True)
+
+    ticket_ids = []
+    for doc in docs:
+        match = re.fullmatch(r"ticket-([0-9]+)(?:b)?\.md", doc["id"])
+        if match:
+            ticket_ids.append(int(match.group(1)))
+    _read_related_customers(sorted(set(ticket_ids)), principal_id, run_b, expires_at, path)
+    return llm.summarize(safe_docs)
+
+
+def _authorize(path: Path, principal_id: str, run_id: str, expires_at: str,
+               tool: str, classification: str, purpose: str,
+               scopes: tuple[str, ...], args: dict, egress: bool = False) -> bool:
+    context = policy.PolicyContext(
+        data_classification=classification, request_purpose=purpose,
+        agent_owner=f"lab24-agent/{run_id}", delegation_depth=0,
+        egress_enabled=egress, principal_id=principal_id, requested_tool=tool,
+        agent_scopes=scopes, parent_scopes=(), expires_at=expires_at,
+    )
+    allow, reason = policy.check(context)
+    ledger.append({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "agent_id": "lab24-agent", "run_id": run_id,
+        "on_behalf_of": principal_id, "expires_at": expires_at,
+        "tool": tool,
+        "args_hash": hashlib.sha256(json.dumps(args, sort_keys=True).encode("utf-8")).hexdigest(),
+        "classification": classification,
+        "decision": "allow" if allow else "deny", "reason": reason,
+    }, path)
+    return allow
+
+
+def _read_related_customers(ticket_ids: list[int], principal_id: str,
+                            run_id: str, expires_at: str, path: Path) -> None:
+    # Kiểm quyền trước cả việc mở private store để tra quan hệ ticket.
+    if not ticket_ids or not _authorize(
+        path, principal_id, run_id, expires_at, "read_customer", "restricted",
+        "support-reply", ("read_customer",), {"ticket_ids": ticket_ids},
+    ):
+        return
+    customers = json.loads(tools.CUSTOMERS_FILE.read_text(encoding="utf-8"))
+    selected = set(ticket_ids)
+    for customer in customers:
+        if not selected.intersection(customer.get("related_tickets", [])):
+            continue
+        customer_id = customer["customer_id"]
+        if _authorize(path, principal_id, run_id, expires_at,
+                      "read_customer", "restricted", "support-reply",
+                      ("read_customer",), {"customer_id": customer_id}):
+            tools.read_customer(customer_id)
